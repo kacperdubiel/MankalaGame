@@ -1,24 +1,29 @@
 package MankalaGame;
 
+import MankalaGame.ValueHeuristics.ValueHeuristic;
+
 import java.io.IOException;
-import java.util.Random;
-import java.util.Scanner;
+import java.util.*;
 
 public class Mankala {
-    private GameState gameState;
+    public GameState gameState;
     private final int numberOfHoles;
     private final int startingStones;
+    private final int depth;
+    private final ValueHeuristic valueHeuristic;
 
-    private Player northPlayer;
-    private Player southPlayer;
+    private final Player northPlayer;
+    private final Player southPlayer;
     private Player currentPlayer;
 
-    private Scanner inputScanner;
+    private final Scanner inputScanner;
     private String message;
 
-    public Mankala(int numberOfHoles, int startingStones, Player p1, Player p2){
+    public Mankala(int numberOfHoles, int startingStones, int depth, ValueHeuristic valueHeuristic, Player p1, Player p2){
         this.numberOfHoles = numberOfHoles > 0 ? numberOfHoles : 1;
         this.startingStones = startingStones > 0 ? startingStones : 1;
+        this.depth = depth;
+        this.valueHeuristic = valueHeuristic;
 
         southPlayer = p1;
         northPlayer = p2;
@@ -26,6 +31,22 @@ public class Mankala {
         inputScanner = new Scanner(System.in);
 
         gameState = new GameState(numberOfHoles, startingStones);
+    }
+
+    public Mankala(Mankala other){
+        this.numberOfHoles = other.numberOfHoles;
+        this.startingStones = other.startingStones;
+        this.depth = other.depth;
+        this.valueHeuristic = other.valueHeuristic;
+
+        this.southPlayer = other.southPlayer;
+        this.northPlayer = other.northPlayer;
+        this.currentPlayer = other.currentPlayer;
+
+        inputScanner = new Scanner(System.in);
+        this.message = "";
+
+        this.gameState = new GameState(other.gameState);
     }
 
     public void runGame(){
@@ -57,20 +78,88 @@ public class Mankala {
 
     private void currentPlayerPlay(){
         if(currentPlayer.useAI){
-            // TODO
-            System.out.println("AI MOVE!");
+            ArrayList<Integer> moves = getPossibleMoves();
+            Map<Integer, Integer> movesValues = new HashMap<>();
+            for(int move : moves){
+                Mankala gameCopy = new Mankala(this);
+                gameCopy.moveStones(move);
+                int valueForMove = minmax(gameCopy, depth, gameCopy.isSouthTurn());
+                movesValues.put(move, valueForMove);
+            }
+
+            int bestMove = isSouthTurn() ? findMax(movesValues) : findMin(movesValues);
+            moveStones(bestMove);
         } else {
             int holeInput = getUserInput();
             moveStones(holeInput);
         }
-
-        if(areSouthHolesEmpty())
-            fillNorthWell();
-
-        if(areNorthHolesEmpty())
-            fillSouthWell();
-
         printGameState();
+    }
+
+    private ArrayList<Integer> getPossibleMoves(){
+        ArrayList<Integer> moves = new ArrayList<>();
+        for(int i = 0; i < numberOfHoles; i++){
+            if(movePossible(i))
+                moves.add(i);
+        }
+        return moves;
+    }
+
+    private boolean movePossible(int holeIndex){
+        if(holeIndex >= 0 && holeIndex < numberOfHoles){
+            return isSouthTurn() && gameState.board.get(holeIndex) > 0 ||
+                    isNorthTurn() && gameState.board.get(holeIndex + numberOfHoles) > 0;
+        }
+        return false;
+    }
+
+    private int minmax(Mankala node, int depth, boolean maximizingPlayer){
+        if(depth == 0 || node.gameState.isFinished()){
+            return valueHeuristic.getValue(node);
+        }
+        int value;
+        ArrayList<Integer> moves = node.getPossibleMoves();
+
+        if(maximizingPlayer){
+            value = Integer.MIN_VALUE;
+
+            for(int move : moves){
+                Mankala gameCopy = new Mankala(node);
+                gameCopy.moveStones(move);
+
+                value = Math.max(value, minmax(gameCopy, depth - 1, isSouthTurn()));
+            }
+        } else {  // minimizing player
+            value = Integer.MAX_VALUE;
+
+            for(int move : moves){
+                Mankala gameCopy = new Mankala(node);
+                gameCopy.moveStones(move);
+
+                value = Math.min(value, minmax(gameCopy, depth - 1, isSouthTurn()));
+            }
+        }
+        return value;
+    }
+
+    private int findMax(Map<Integer, Integer> movesValues){
+        Map.Entry<Integer, Integer> max = null;
+        for (Map.Entry<Integer, Integer> entry : movesValues.entrySet()) {
+            if (max == null || max.getValue() < entry.getValue()) {
+                max = entry;
+            }
+        }
+        return max != null ? max.getKey() : -1;
+    }
+
+    private int findMin(Map<Integer, Integer> movesValues){
+        Map.Entry<Integer, Integer> min = null;
+        for (Map.Entry<Integer, Integer> entry : movesValues.entrySet()) {
+            if (min == null || min.getValue() > entry.getValue()) {
+                min = entry;
+            }
+        }
+        return min != null ? min.getKey() : -1;
     }
 
     private int getUserInput(){
@@ -85,9 +174,7 @@ public class Mankala {
             try{
                 holeInput = Integer.parseInt(userInput);
                 if(holeInput >= 0 && holeInput < numberOfHoles)
-                    if(isSouthTurn() && gameState.board.get(holeInput) > 0)
-                        correctUserInput = true;
-                    else if(isNorthTurn() && gameState.board.get(holeInput+numberOfHoles) > 0)
+                    if(movePossible(holeInput))
                         correctUserInput = true;
                     else{
                         String warning = "That hole is empty!";
@@ -163,12 +250,23 @@ public class Mankala {
             }
         }
 
+        if(areSouthHolesEmpty())
+            fillNorthWell();
+
+        if(areNorthHolesEmpty())
+            fillSouthWell();
+
+        if(isSouthTurn())
+            gameState.southPlayerMoves++;
+        else
+            gameState.northPlayerMoves++;
+
         if(changePlayerTurn){
             changeTurn();
         }
     }
 
-    private boolean strike(int currentHoleId, int oppositeHoleId){
+    private void strike(int currentHoleId, int oppositeHoleId){
         int currentStones = gameState.board.get(currentHoleId);
         if(currentStones == 1){
             int oppositeStones = gameState.board.get(oppositeHoleId);
@@ -176,16 +274,17 @@ public class Mankala {
                 if(isSouthTurn()) {
                     gameState.southWell += oppositeStones;
                     gameState.southWell += currentStones;
+                    gameState.southPlayerStrikes++;
                 } else {
                     gameState.northWell += oppositeStones;
                     gameState.northWell += currentStones;
+                    gameState.northPlayerStrikes++;
                 }
 
                 gameState.board.set(currentHoleId, 0);
                 gameState.board.set(oppositeHoleId, 0);
             }
         }
-        return true;
     }
 
     private void changeTurn(){
@@ -290,7 +389,7 @@ public class Mankala {
         }
         System.out.println("\n");
 
-        if(message.length() > 0)
+        if(message != null && message.length() > 0)
             System.out.println(message);
     }
 
